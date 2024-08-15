@@ -59,18 +59,27 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define UART_SBUS huart2
 #define UART_CAM_CTRL hlpuart1
 #define UART_CRSF huart4
 #define UART_FRQ_CTRL huart1
-#define UART_SBUS huart2
+#define UART_485 huart3
 #define RLED_Pin GPIO_PIN_13
 #define RLED_GPIO_Port GPIOC
 #define MVIDEO_Pin GPIO_PIN_14
 #define MVIDEO_GPIO_Port GPIOC
+#define MCRSF_Pin GPIO_PIN_15
+#define MCRSF_GPIO_Port GPIOC
+#define RS485_DIR_Pin GPIO_PIN_12
+#define RS485_DIR_GPIO_Port GPIOB
 #define SWDIO_Pin GPIO_PIN_13
 #define SWDIO_GPIO_Port GPIOA
 #define SWCLK_Pin GPIO_PIN_14
 #define SWCLK_GPIO_Port GPIOA
+#define VCODEC_EN_Pin GPIO_PIN_3
+#define VCODEC_EN_GPIO_Port GPIOB
+#define VINP_SW_Pin GPIO_PIN_5
+#define VINP_SW_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

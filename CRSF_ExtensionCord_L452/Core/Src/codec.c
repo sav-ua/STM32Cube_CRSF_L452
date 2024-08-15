@@ -7,8 +7,19 @@ crsf_RC_packed_t_str sVltgToCrsfPacket = {
 };
 */
 
-
+//1400-1600
+//800-1100
 uint16_t uAdcData[4] = {2048, 2048, 2048, 2048};
+
+static void vSetExtVideoChannel(uint32_t ch){
+	if(ch ==0){
+		HAL_GPIO_WritePin(VINP_SW_GPIO_Port, VINP_SW_Pin, 1);		// Enable external video input #0
+	}
+	else if(ch == 1){
+		HAL_GPIO_WritePin(VINP_SW_GPIO_Port, VINP_SW_Pin, 0);		// Enable external video input #1
+	}
+	else return;
+}
 
 static inline uint16_t convert_code_to_channel_value(uint16_t code){
      /*
@@ -21,7 +32,7 @@ static inline uint16_t convert_code_to_channel_value(uint16_t code){
 	static const float offset = (172.f);
 		return (scale * code) + offset;
  }
-
+#if 0
 static uint16_t convert_us_to_channel_value(uint16_t pwm_us){
 //#define PWM_MIN_US 988.0f
 //#define PWM_MAX_US 2012.0f
@@ -35,7 +46,7 @@ static uint16_t convert_us_to_channel_value(uint16_t pwm_us){
 	static const float offset = 172.f - PWM_MIN_US * scale;
 		return (scale * pwm_us) + offset;
 }
-
+#endif
 static inline uint16_t convert_channel_value_to_us(uint16_t chan_value){
 	/*
 	*       RC     PWM
@@ -93,16 +104,6 @@ sFreqCodeStr vExtendedPacketCoding(uint16_t* adc,
 				extd_packet->pld.pl0.chan14 	= convert_code_to_channel_value(adc[0]);
 				extd_packet->pld.pl0.chan15 	= convert_code_to_channel_value(adc[1]);
 			}
-
-/*
-			extd_packet->pld.pl1		= sbus0->pl;
-
-			extd_packet->pld.pl2.chan0 	= convert_code_to_channel_value(adc[0]);
-			extd_packet->pld.pl2.chan1 	= convert_code_to_channel_value(adc[1]);
-			extd_packet->pld.pl2.chan2 	= convert_code_to_channel_value(adc[2]);
-			extd_packet->pld.pl2.chan3 	= convert_code_to_channel_value(adc[3]);
-*/
-
 			extd_packet->crc = crc8_dvb_s2(0, extd_packet->type);					// CRC includes type and payload
 			for (int i = 0; i < extd_packet->length - 2; ++i)	extd_packet->crc = crc8_dvb_s2(extd_packet->crc, ((uint8_t*)&(extd_packet->pld))[i]);
 
@@ -125,35 +126,37 @@ sFreqCodeStr vExtendedPacketCoding(uint16_t* adc,
 				sbus0->pl	= extd_packet->pld.pl0;
 
 
-			// ADC & PWM
-				TIM3->CCR3 = (uint16_t)((float)convert_channel_value_to_us(extd_packet->pld.pl0.chan14) * TICK_PER_uS);
-				TIM3->CCR4 = (uint16_t)((float)convert_channel_value_to_us(extd_packet->pld.pl0.chan15) * TICK_PER_uS);
+			// External video switch control
+				TIM15->CCR1 = (uint16_t)((float)convert_channel_value_to_us(extd_packet->pld.pl0.chan14) * TICK_PER_uS);
+				TIM15->CCR2 = (uint16_t)((float)convert_channel_value_to_us(extd_packet->pld.pl0.chan15) * TICK_PER_uS);
+				if((convert_channel_value_to_us(extd_packet->pld.pl0.chan15) >= 800)
+						&& (convert_channel_value_to_us(extd_packet->pld.pl0.chan15) <= 1100)){
+					vSetExtVideoChannel(0);
+				}
+				else if((convert_channel_value_to_us(extd_packet->pld.pl0.chan15) >= 1400)
+						&& (convert_channel_value_to_us(extd_packet->pld.pl0.chan15) <= 1600)){
+					vSetExtVideoChannel(1);
+				}
+				else
+					vSetExtVideoChannel(0);
+
 
 			// Frequency coding
 				f.uFreqCode 		= extd_packet->pld.pl0.chan10;
 				f.uFreqCodeRange	= extd_packet->pld.pl0.chan11;
 			}
-			else{
+			else{// type = 0x65
 			//SBUS packet for camera control
 				sbus1->header = 0x0F;
 				sbus1->b23 = 0x00;
 				sbus1->footer = 0x00;
 				sbus1->pl	= extd_packet->pld.pl0;
 
+				// ADC to PWM
 				TIM3->CCR1 = (uint16_t)((float)convert_channel_value_to_us(extd_packet->pld.pl0.chan14)  * TICK_PER_uS);
 				TIM3->CCR2 = (uint16_t)((float)convert_channel_value_to_us(extd_packet->pld.pl0.chan15)  * TICK_PER_uS);
 
 			}
-/*
-			sbus1->pl	= extd_packet->pld.pl1;
-
-			// ADC & PWM
-
-			TIM3->CCR1 = (uint16_t)((float)convert_channel_value_to_us(extd_packet->pld.pl2.chan0)  * TICK_PER_uS);
-			TIM3->CCR2 = (uint16_t)((float)convert_channel_value_to_us(extd_packet->pld.pl2.chan1)  * TICK_PER_uS);
-*/
-
-
 		}
 		return f;
 }

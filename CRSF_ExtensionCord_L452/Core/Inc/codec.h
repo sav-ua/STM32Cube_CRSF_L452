@@ -28,7 +28,7 @@
 #define PWM_MAX_CMPR_US (PWM_MAX_US - (PWM_MAX_US - PWM_MIN_US) / 100 * PWM_COMPRESS_RATIO_PCT)
 
 
-#define TICK_PER_uS 2.4f
+#define TICK_PER_uS 2.5f//2.4f 500000ticks - 20ms
 
 typedef enum{
 	encoder,

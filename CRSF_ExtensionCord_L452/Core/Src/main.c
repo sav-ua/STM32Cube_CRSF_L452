@@ -24,6 +24,7 @@
 #include "codec.h"
 #include "camera.h"
 #include "filter.h"
+#include "ctrl_link.h"
 #include <string.h>
 //#include "usbd_cdc_if.h"
 #include <stdio.h>
@@ -68,6 +69,8 @@ DMA_HandleTypeDef hdma_uart4_tx;
 DMA_HandleTypeDef hdma_usart1_tx;
 DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
+DMA_HandleTypeDef hdma_usart3_rx;
+DMA_HandleTypeDef hdma_usart3_tx;
 
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim15;
@@ -168,6 +171,7 @@ const sRadioFreqStr sRadioFreq = {
 		.uRangeX = {1152, 1811}
 #endif
 
+
 };
 /* USER CODE END PV */
 
@@ -221,8 +225,12 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size){
 	if(huart == &UART_SBUS){
 		if( (((sSbusPacketStr*)uSbusRxBuffer)->header == 0x0F) && (((sSbusPacketStr*)uSbusRxBuffer)->footer == 0x00) ){
 			memcpy((uint8_t*)&sCameraCtrlSbusEncoder, uSbusRxBuffer, sizeof(sCameraCtrlSbusEncoder));
+
+			memcpy((uint8_t*)&sLinkSbusMosi, uSbusRxBuffer, sizeof(sSbusPacketStr));
+			vCtrlLinkTransmit((sSbusPacketStr*)&sLinkSbusMosi);
 		}
 		HAL_UARTEx_ReceiveToIdle_DMA(&UART_SBUS, (uint8_t*)uSbusRxBuffer, sizeof(uSbusRxBuffer));
+
 	}
 	else if(huart == &UART_CRSF){
 		if(((sCrsfPacketStr*)uRxBuffer)->type ==  CRSF_PACKET_TYPE){ // CRSF packet.CODER side
@@ -285,6 +293,13 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *UartHandle){
 	}
 
 }
+
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart){
+	if(huart == &UART_485){
+		vTxCmplete();
+	}
+}
 /* USER CODE END 0 */
 
 /**
@@ -310,7 +325,7 @@ int main(void)
   /* Configure the system clock */
   SystemClock_Config();
 
-/* Configure the peripherals common clocks */
+  /* Configure the peripherals common clocks */
   PeriphCommonClock_Config();
 
   /* USER CODE BEGIN SysInit */
@@ -365,13 +380,32 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
+
+#if 0
+//----------------------------------------------------
+// USART3 bidirectional mode test
+// WO inversion, 115200 8/n/n, RS485
+// Direction pin - RS485_DIR
+	  while(1){
+		  HAL_GPIO_WritePin(RS485_DIR_GPIO_Port, RS485_DIR_Pin, 1);
+		  HAL_UART_Transmit_DMA(&UART_485, uExtendedTxBuffer, sizeof(sExtendedCrsfPacketStr));
+
+		  HAL_Delay(10);
+	  }
+//----------------------------------------------------
+#endif
   {
-	  if(HAL_GPIO_ReadPin(MVIDEO_GPIO_Port, MVIDEO_Pin)){ // RF side. RLED- ON
+	  if(HAL_GPIO_ReadPin(MVIDEO_GPIO_Port, MVIDEO_Pin)){ 		// RF side. RLED- ON
 		  HAL_GPIO_WritePin(RLED_GPIO_Port, RLED_Pin, 0);
+		  HAL_GPIO_WritePin(MCRSF_GPIO_Port, MCRSF_Pin, 0);		// CRSF packets bypass uC
+
 	  }
-	  else{													// Remote control side. GLED - OFF
+	  else{														// Remote control side. GLED - OFF
 		  HAL_GPIO_WritePin(RLED_GPIO_Port, RLED_Pin, 1);
+		  HAL_GPIO_WritePin(MCRSF_GPIO_Port, MCRSF_Pin, 1);		// CRSF packets go through uC
 	  }
+	  HAL_GPIO_WritePin(VCODEC_EN_GPIO_Port, VCODEC_EN_Pin, 0);	// Disable external video decoder
+
 
     /* USER CODE END WHILE */
 
@@ -785,7 +819,7 @@ static void MX_USART3_UART_Init(void)
 
   /* USER CODE END USART3_Init 1 */
   huart3.Instance = USART3;
-  huart3.Init.BaudRate = 115200;
+  huart3.Init.BaudRate = 100000;
   huart3.Init.WordLength = UART_WORDLENGTH_8B;
   huart3.Init.StopBits = UART_STOPBITS_1;
   huart3.Init.Parity = UART_PARITY_NONE;
@@ -975,6 +1009,12 @@ static void MX_DMA_Init(void)
   /* DMA1_Channel1_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
+  /* DMA1_Channel2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
+  /* DMA1_Channel3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
   /* DMA1_Channel4_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel4_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel4_IRQn);
@@ -1016,18 +1056,31 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(RLED_GPIO_Port, RLED_Pin, GPIO_PIN_SET);
 
-  /*Configure GPIO pin : RLED_Pin */
-  GPIO_InitStruct.Pin = RLED_Pin;
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(MCRSF_GPIO_Port, MCRSF_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, RS485_DIR_Pin|VCODEC_EN_Pin|VINP_SW_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pins : RLED_Pin MCRSF_Pin */
+  GPIO_InitStruct.Pin = RLED_Pin|MCRSF_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(RLED_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : MVIDEO_Pin */
   GPIO_InitStruct.Pin = MVIDEO_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(MVIDEO_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : RS485_DIR_Pin VCODEC_EN_Pin VINP_SW_Pin */
+  GPIO_InitStruct.Pin = RS485_DIR_Pin|VCODEC_EN_Pin|VINP_SW_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */

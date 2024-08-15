@@ -37,7 +37,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-//1234
+//1
 
 #define X_RANGE_ENABLED
 

@@ -6,7 +6,7 @@
  */
 
 #include "camera.h"
-
+#include "codec.h"
 
 const uint16_t crc16_tab[256]={
         0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50A5, 0x60C6, 0x70E7, 0x8108, 0x9129, 0xA14A, 0xB16B, 0xC18C, 0xD1AD, 0xE1CE, 0xF1EF,
@@ -49,6 +49,20 @@ sCameraPacketL2Str sCameraPacketL2 = {
 		.crc		=	0x0000
 };
 
+sCameraPacketL6Str sCameraPacketL6 = {
+		.stx		=	0x6655,
+		.ctrl		=	0x01,
+		.data_len	=	0x0009,
+		.seq		=	0x0000,
+		.cmd_id		=	0x21,
+		.data1		=	0x01,
+		.data2		=	0x02,
+		.data3		=	1280,
+		.data4		=	720,
+		.data5		=	1500,
+		.data6		=	0x00,
+		.crc		=	0x0000
+};
 
 
 /***********************************************************
@@ -93,6 +107,15 @@ void vCameraPacketComposeL1(sCameraPacketL1Str* packet, eCameraCmdStr cmd, int8_
 	packet->data		=	*(uint8_t*)&param;
 	crc_check_16bites((uint8_t*)packet, sizeof(sCameraPacketL1Str) - 2, &packet->crc);
 }
+void vCameraPacketComposeL6(sCameraPacketL6Str* packet, eCameraCmdStr cmd, int8_t param){
+	packet->stx			=	0x6655;
+	packet->ctrl		=	0x01;
+	packet->data_len	=	0x0009;
+	packet->seq			=	0x0000;
+	packet->cmd_id		=	cmd;
+	packet->data1		=	*(uint8_t*)&param;
+	crc_check_16bites((uint8_t*)packet, sizeof(sCameraPacketL6Str) - 2, &packet->crc);
+}
 
 
 
@@ -110,6 +133,25 @@ void vCameraPacketComposeL1(sCameraPacketL1Str* packet, eCameraCmdStr cmd, int8_
 #define RC_STICK_CH_MAX			1811
 #define RC_STICK_CH_LOW_SCF		100.f / (float)(RC_STICK_CH_MIDDLE_L - RC_STICK_CH_MIN)	// Scale factor from (RC_STICK_CH_MIDDLE_L - RC_STICK_CH_MIN) --> 100
 #define RC_STICK_CH_HIGH_SCF	100.f / (float)(RC_STICK_CH_MAX - RC_STICK_CH_MIDDLE_H)	// Scale factor from (RC_STICK_CH_MIDDLE_H - RC_STICK_CH_MIN) --> 100
+
+
+#define RC_SW_LEVEL0_MIN 938
+#define RC_SW_LEVEL0_MAX 1038
+
+#define RC_SW_LEVEL1_MIN 1143
+#define RC_SW_LEVEL1_MAX 1243
+
+#define RC_SW_LEVEL2_MIN 1348
+#define RC_SW_LEVEL2_MAX 1448
+
+#define RC_SW_LEVEL3_MIN 1552
+#define RC_SW_LEVEL3_MAX 1652
+
+#define RC_SW_LEVEL4_MIN 1757
+#define RC_SW_LEVEL4_MAX 1857
+
+#define RC_SW_LEVEL5_MIN 1962
+#define RC_SW_LEVEL5_MAX 2062
 
 /*----------------------------------------------------------------------------------------------
 Switch channel
@@ -165,6 +207,14 @@ UP     2012
  min 988
  mid 1470-1530
  higt 2012
+------------------------------------------------  15.06.2024 and ZT6 camera compatibility -----------
+8 Request the Thermal Color Palette
+ 0	938-1038		White_Hot 	0
+ 1	1043-1143		Ironbow		3
+ 2	1348-1448		Night		5
+ 3	1552-1652		Red_Hot		7
+ 4	1757-1857		Black_Hot	10
+ 5	1962-2062		Glory_Hot	11
 
 //---------------------------------------------------------------------------------------*/
 static void vCameraGimbalRotaionCtrl (sSbusPacketStr* p){
@@ -292,6 +342,50 @@ static void vCameraManualFocus(sSbusPacketStr* p){
 		HAL_Delay(1);
 }
 
+//------------------------------------------------  15.06.2024 and ZT6 camera compatibility -----------
+
+static void vSend_Thermal_Color_to_Gimbal_Camera(sSbusPacketStr* p){
+	static uint16_t ch8_old = 0;
+	int8_t  palette;
+		if(p->pl.chan8 == ch8_old)
+			return; // Exit if no changes
+		else	ch8_old = p->pl.chan8;
+		if		((p->pl.chan8 >= convert_us_to_channel_value(RC_SW_LEVEL0_MIN)) && (p->pl.chan8 <= convert_us_to_channel_value(RC_SW_LEVEL0_MAX)))	palette	= 0; 	//White_Hot 0
+		else if	((p->pl.chan8 >= convert_us_to_channel_value(RC_SW_LEVEL1_MIN)) && (p->pl.chan8 <= convert_us_to_channel_value(RC_SW_LEVEL1_MAX)))	palette	= 3;  	//Ironbow	3
+		else if	((p->pl.chan8 >= convert_us_to_channel_value(RC_SW_LEVEL2_MIN)) && (p->pl.chan8 <= convert_us_to_channel_value(RC_SW_LEVEL2_MAX)))	palette	= 5;  	//Night		5
+		else if	((p->pl.chan8 >= convert_us_to_channel_value(RC_SW_LEVEL3_MIN)) && (p->pl.chan8 <= convert_us_to_channel_value(RC_SW_LEVEL3_MAX)))	palette	= 7;  	//Red_Hot	7
+		else if	((p->pl.chan8 >= convert_us_to_channel_value(RC_SW_LEVEL4_MIN)) && (p->pl.chan8 <= convert_us_to_channel_value(RC_SW_LEVEL4_MAX)))	palette	= 10;  	//Black_Hot	10
+		else if	((p->pl.chan8 >= convert_us_to_channel_value(RC_SW_LEVEL5_MIN)) && (p->pl.chan8 <= convert_us_to_channel_value(RC_SW_LEVEL5_MAX)))	palette	= 11;  	//Glory_Hot	11
+		else return;
+		vCameraPacketComposeL1(&sCameraPacketL1, Send_Thermal_Color_to_Gimbal_Camera, palette);
+		HAL_UART_Transmit_DMA(&UART_CAM_CTRL, (uint8_t*)&sCameraPacketL1, sizeof(sCameraPacketL1));
+		HAL_Delay(1);
+}
+
+static void vSend_Image_Mode_to_Gimbal_Camera(sSbusPacketStr* p){
+	static uint16_t ch10_old = 0;
+	int8_t  iCodecSpecs = 0;
+
+		if(p->pl.chan10 == ch10_old)
+			return; // Exit if no changes
+		else	ch10_old = p->pl.chan10;
+
+		if		(p->pl.chan10 < RC_SW_CH_MIN_H)												iCodecSpecs = 0;	//
+		else if((p->pl.chan10 >= RC_SW_CH_MIDDLE_L) && (p->pl.chan10 <= RC_SW_CH_MIDDLE_H))	iCodecSpecs = 7;	//
+		else if (p->pl.chan10 > RC_SW_CH_MAX_L)												iCodecSpecs = 3;	//
+		else return;
+
+		vCameraPacketComposeL1(&sCameraPacketL1, Send_Image_Mode_to_Gimbal_Camera, iCodecSpecs);
+		HAL_UART_Transmit_DMA(&UART_CAM_CTRL, (uint8_t*)&sCameraPacketL1, sizeof(sCameraPacketL1));
+		HAL_Delay(6000);
+
+		vCameraPacketComposeL1(&sCameraPacketL1, Photo_and_Video, 7);
+		HAL_UART_Transmit_DMA(&UART_CAM_CTRL, (uint8_t*)&sCameraPacketL1, sizeof(sCameraPacketL1));
+		HAL_Delay(1);
+
+}
+
+
 vCameraFuncPrtType vCameraFuncArray[] = {
 		&vCameraGimbalRotaionCtrl,
 		&vCameraManualZoomAndAutoFocus,
@@ -299,7 +393,9 @@ vCameraFuncPrtType vCameraFuncArray[] = {
 		&vCameraPhotoAndVideoRecording,
 		&vCameraPhotoAndVideoMotionMode,
 		&vCameraAutoFocus,
-		&vCameraManualFocus
+		&vCameraManualFocus,
+		&vSend_Image_Mode_to_Gimbal_Camera,
+		&vSend_Thermal_Color_to_Gimbal_Camera,
 };
 void vConvertSbusToCameraProtocol(sSbusPacketStr* p){
 	static uint32_t c = 0;

@@ -7,10 +7,15 @@
 
 
 #define CRSF_PACKET_TYPE 0x16
-#define EXTENDED_CRSF_PACKET_TYPE 0x64
-
 #define CRSF_PACKET_LENGTH 26
 #define CRSF_PAYLOAD_LENGTH (CRSF_PACKET_LENGTH - 4) // CRSF_PACKET_LENGTH - (header + length + type + crc)
+
+
+#define EXTENDED_CRSF_PACKET_TYPE 0x64
+
+#define EXT_CTRL_LINK_PACKET_TYPE 	0x64
+#define EXT_CTRL_LINK_PACKET_LENGTH 48//52
+
 
 #define EXTENDED_PAYLOAD_CNT	1
 #define EXTENDED_CRSF_PACKET_LENGTH (CRSF_PAYLOAD_LENGTH * EXTENDED_PAYLOAD_CNT + 4)
@@ -83,17 +88,10 @@ typedef enum{
 			 uint8_t payload0[CRSF_PAYLOAD_LENGTH];
 			 sCrsfPayloadStr pl0;
 		 };
-/*
 		 union{
 			 uint8_t payload1[CRSF_PAYLOAD_LENGTH];
 			 sCrsfPayloadStr pl1;
 		 };
-
-		 union{
-			 uint8_t payload2[CRSF_PAYLOAD_LENGTH];
-			 sCrsfPayloadStr pl2;
-		 };
-*/
 	 }pld;
 	 uint8_t crc;
  }sExtendedCrsfPacketStr;
@@ -144,11 +142,25 @@ Byte[24]: SBUS footer
 
 extern uint8_t crc8_dvb_s2(uint8_t crc, uint8_t a);
 extern uint16_t uAdcData[4];
-
-extern sFreqCodeStr vExtendedPacketCoding(uint16_t* adc,
-		sCrsfPacketStr* packet,
+extern uint16_t convert_us_to_channel_value(uint16_t pwm_us);
+extern sFreqCodeStr 	vExtendedPacketCoding(
+		uint16_t* 				adc,
+		sCrsfPacketStr* 		packet,
 		sExtendedCrsfPacketStr* extd_packet,
-		sSbusPacketStr* sbus0,
-		sSbusPacketStr* sbus1,
-		eCodecStateEnum st);
+		sSbusPacketStr* 		sbus0,
+		sSbusPacketStr* 		sbus1,
+		eCodecStateEnum 		st);
+extern	void 			vCtrlLinkEncoderRCside(
+		uint16_t* adc,
+		sExtendedCrsfPacketStr*	crsf_out,
+		sSbusPacketStr* 		sbus_in);
+
+extern void				vCtrlLinkDecoderRFside(
+		sExtendedCrsfPacketStr* extd_packet,
+		sSbusPacketStr* 		sbus_out
+		);
+extern sFreqCodeStr vCrsfDecoderRFside(
+		sCrsfPacketStr* 		crsf,
+		sSbusPacketStr* 		sbus);
+
 #endif

@@ -12,11 +12,15 @@
 #include "main.h"
 #include "codec.h"
 
+
+typedef enum{
+	rc_side = 0,
+	rf_side,
+}eCordSideEnum;
+
 extern UART_HandleTypeDef huart3;
 
-
-extern sSbusPacketStr sLinkSbusMosi;
-
+extern eCordSideEnum uGetCorddSide(void);
 extern void vTxCmplete(void);
-extern void vCtrlLinkTransmit(sSbusPacketStr* ptr);
+extern void vCtrlLinkTransmitRC_Side(sExtendedCrsfPacketStr* ptr);
 #endif /* INC_CTRL_LINK_H_ */

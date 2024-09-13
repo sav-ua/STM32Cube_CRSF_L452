@@ -31,7 +31,7 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#define CRSF_DIRECT_LINK
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/

@@ -32,8 +32,8 @@ static inline uint16_t convert_code_to_channel_value(uint16_t code){
 	static const float offset = (172.f);
 		return (scale * code) + offset;
  }
-#if 0
-static uint16_t convert_us_to_channel_value(uint16_t pwm_us){
+
+uint16_t convert_us_to_channel_value(uint16_t pwm_us){
 //#define PWM_MIN_US 988.0f
 //#define PWM_MAX_US 2012.0f
 	/*
@@ -46,7 +46,7 @@ static uint16_t convert_us_to_channel_value(uint16_t pwm_us){
 	static const float offset = 172.f - PWM_MIN_US * scale;
 		return (scale * pwm_us) + offset;
 }
-#endif
+
 static inline uint16_t convert_channel_value_to_us(uint16_t chan_value){
 	/*
 	*       RC     PWM
@@ -83,83 +83,71 @@ uint8_t crc8_dvb_s2(uint8_t crc, uint8_t a){
      return crc;
 }
 
-sFreqCodeStr vExtendedPacketCoding(uint16_t* adc,
-		sCrsfPacketStr* packet,							// Incoming CRSF packet from Remote control
+void vCtrlLinkEncoderRCside(uint16_t* adc,
+		sExtendedCrsfPacketStr*	crsf_out,							// Outgoing ExtCRSF packet from Remote control 485 link
+		sSbusPacketStr*			sbus_in){							// Incoming SBUS packet from Remote control (Camera control)
+			crsf_out->header		= 0xEE;
+			crsf_out->length		= EXT_CTRL_LINK_PACKET_LENGTH - 2;
+			crsf_out->type			= EXT_CTRL_LINK_PACKET_TYPE;
+			crsf_out->pld.pl0		= sbus_in->pl;
+
+			crsf_out->pld.pl1.chan0  	= convert_code_to_channel_value(adc[0]);
+			crsf_out->pld.pl1.chan1 	= convert_code_to_channel_value(adc[1]);
+			crsf_out->pld.pl1.chan2  	= convert_code_to_channel_value(adc[2]);
+			crsf_out->pld.pl1.chan3 	= convert_code_to_channel_value(adc[3]);
+			crsf_out->crc = crc8_dvb_s2(0, crsf_out->type);	// ExtCRC includes type and payload
+			for (int i = 0; i < crsf_out->length - 2; ++i)	crsf_out->crc = crc8_dvb_s2(crsf_out->crc, ((uint8_t*)&(crsf_out->pld))[i]);
+}
+
+void vCtrlLinkDecoderRFside(
 		sExtendedCrsfPacketStr* extd_packet,			// Extended CRSF packet is used for communication between the uCUs on both sides
-		sSbusPacketStr* sbus0,							// Incoming SBUS packet from Remote control (Camera control)
-		sSbusPacketStr* sbus1,							// Outgoing SBUS packet from RF side (Camera control)
-		eCodecStateEnum st){
-	static sFreqCodeStr f = {1000, 1000};
-	static uint32_t codec_address_offset = 0;
-		if(st == encoder){
-			extd_packet->header			= 0xEE;
-			extd_packet->length			= CRSF_PACKET_LENGTH - 2/*EXTENDED_CRSF_PACKET_LENGTH - 2*/;
-			extd_packet->type			= EXTENDED_CRSF_PACKET_TYPE + codec_address_offset;
-			if(codec_address_offset == 0){
-				extd_packet->pld.pl0		= packet->pl;
-			}
-			else{
-				extd_packet->pld.pl0		= sbus0->pl;
-
-				extd_packet->pld.pl0.chan14 	= convert_code_to_channel_value(adc[0]);
-				extd_packet->pld.pl0.chan15 	= convert_code_to_channel_value(adc[1]);
-			}
-			extd_packet->crc = crc8_dvb_s2(0, extd_packet->type);					// CRC includes type and payload
-			for (int i = 0; i < extd_packet->length - 2; ++i)	extd_packet->crc = crc8_dvb_s2(extd_packet->crc, ((uint8_t*)&(extd_packet->pld))[i]);
-
-			if(++codec_address_offset >= 2) codec_address_offset = 0;
-		}
-		else if (st == decode){
-			if(extd_packet->type == 0x64){
-			//CRSF packet
-				packet->header = 0xEE;
-				packet->length = CRSF_PACKET_LENGTH - 2;
-				packet->type = CRSF_PACKET_TYPE;
-				packet->pl = extd_packet->pld.pl0;
-				packet->crc = crc8_dvb_s2(0, packet->type);					// CRC includes type and payload
-				for (int i = 0; i < packet->length - 2; ++i)	packet->crc = crc8_dvb_s2(packet->crc, packet->payload[i]);
-
-			//SBUS packet the same as CRSF payload
-				sbus0->header = 0x0F;
-				sbus0->b23 = 0x00;
-				sbus0->footer = 0x00;
-				sbus0->pl	= extd_packet->pld.pl0;
-
-
-			// External video switch control
-				TIM15->CCR1 = (uint16_t)((float)convert_channel_value_to_us(extd_packet->pld.pl0.chan14) * TICK_PER_uS);
-				TIM15->CCR2 = (uint16_t)((float)convert_channel_value_to_us(extd_packet->pld.pl0.chan15) * TICK_PER_uS);
-				if((convert_channel_value_to_us(extd_packet->pld.pl0.chan15) >= 800)
-						&& (convert_channel_value_to_us(extd_packet->pld.pl0.chan15) <= 1100)){
-					vSetExtVideoChannel(0);
-				}
-				else if((convert_channel_value_to_us(extd_packet->pld.pl0.chan15) >= 1400)
-						&& (convert_channel_value_to_us(extd_packet->pld.pl0.chan15) <= 1600)){
-					vSetExtVideoChannel(1);
-				}
-				else
-					vSetExtVideoChannel(0);
-
-
-			// Frequency coding
-				f.uFreqCode 		= extd_packet->pld.pl0.chan10;
-				f.uFreqCodeRange	= extd_packet->pld.pl0.chan11;
-			}
-			else{// type = 0x65
+		sSbusPacketStr* sbus_out						// Preparing SBUS packet used for Camera control on RF side
+		){
 			//SBUS packet for camera control
-				sbus1->header = 0x0F;
-				sbus1->b23 = 0x00;
-				sbus1->footer = 0x00;
-				sbus1->pl	= extd_packet->pld.pl0;
+			sbus_out->header = 0x0F;
+			sbus_out->b23 = 0x00;
+			sbus_out->footer = 0x00;
+			sbus_out->pl	= extd_packet->pld.pl0;
 
-				// ADC to PWM
-				TIM3->CCR1 = (uint16_t)((float)convert_channel_value_to_us(extd_packet->pld.pl0.chan14)  * TICK_PER_uS);
-				TIM3->CCR2 = (uint16_t)((float)convert_channel_value_to_us(extd_packet->pld.pl0.chan15)  * TICK_PER_uS);
+			// ADC to PWM
+			TIM3->CCR1 = (uint16_t)((float)convert_channel_value_to_us(extd_packet->pld.pl1.chan0)  * TICK_PER_uS);//adc[0]
+			TIM3->CCR2 = (uint16_t)((float)convert_channel_value_to_us(extd_packet->pld.pl1.chan1)  * TICK_PER_uS);//adc[1]
+}
 
-			}
+sFreqCodeStr vCrsfDecoderRFside(
+		sCrsfPacketStr* crsf,							// Incoming CRSF packet from Remote control
+		sSbusPacketStr* sbus){							// Outgoing SBUS packet with the same payload as in incoming CRSF
+	static sFreqCodeStr f = {1000, 1000};
+	//SBUS packet the same as CRSF payload
+		sbus->header = 0x0F;
+		sbus->b23 = 0x00;
+		sbus->footer = 0x00;
+		sbus->pl	= crsf->pl;
+
+
+	// External video switch control
+		TIM15->CCR1 = (uint16_t)((float)convert_channel_value_to_us(crsf->pl.chan14) * TICK_PER_uS);
+		TIM15->CCR2 = (uint16_t)((float)convert_channel_value_to_us(crsf->pl.chan15) * TICK_PER_uS);
+		if((convert_channel_value_to_us(crsf->pl.chan15) >= 800)
+				&& (convert_channel_value_to_us(crsf->pl.chan15) <= 1100)){
+			vSetExtVideoChannel(0);
 		}
+		else if((convert_channel_value_to_us(crsf->pl.chan15) >= 1400)
+				&& (convert_channel_value_to_us(crsf->pl.chan15) <= 1600)){
+			vSetExtVideoChannel(1);
+		}
+		else
+			vSetExtVideoChannel(0);
+
+
+	// Frequency coding
+		f.uFreqCode 		= crsf->pl.chan10;
+		f.uFreqCodeRange	= crsf->pl.chan11;
+
 		return f;
 }
+
+
 #ifdef TEST_CRSF_TRANSMITTER
 void vTestSbusPacketInit(sSbusPacketStr* p_sbus, uint16_t* adc){
 	p_sbus->header = 0x0F;

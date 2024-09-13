@@ -37,7 +37,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-//1
+
 
 #define X_RANGE_ENABLED
 
@@ -88,24 +88,16 @@ const uint8_t uTxBuffer[3][CRSF_PACKET_LENGTH] = {
 #else
 static uint8_t		uTxBuffer[CRSF_PACKET_LENGTH];
 #endif
-static uint8_t		uExtendedTxBuffer[EXTENDED_CRSF_PACKET_LENGTH];
-static uint8_t		uRxBuffer[200];
+//static uint8_t		uExtendedTxBuffer[EXTENDED_CRSF_PACKET_LENGTH];
+static uint8_t		uCrsfRxBuffer[200];
+static uint8_t		uLinkRxBuffer[200];
 
 static uint8_t		uSbusRxBuffer[SBUS_PACKET_LENGTH + 1];
 
 uint16_t	uAdcBuf[4];
 
-
-static sSbusPacketStr sCameraCtrlSbusEncoder;
-
-static sCrsfPacketStr sCrsfPacketDecoder;
 static sSbusPacketStr sCameraCtrlSbusPacketDecoder;
-static sSbusPacketStr sCrsfToSbusPacketDecoder;
-
-
-// Radio receiver frequency coding (PA9 USART1_TX)
 #define RADIO_CODE_CH_CNT	8
-
 volatile sFreqCodeStr sFreqCode = {1000, 1000};
 
 
@@ -168,7 +160,7 @@ const sRadioFreqStr sRadioFreq = {
 		.uRangeR = {911, 1072},
 		.uRangeL = {172, 831},
 #ifdef X_RANGE_ENABLED
-		.uRangeX = {1152, 1811}
+		.uRangeX = {592, 751}
 #endif
 
 
@@ -223,53 +215,42 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size){
 	uint8_t		crc = 0;
 	if(huart == &UART_SBUS){
-		if( (((sSbusPacketStr*)uSbusRxBuffer)->header == 0x0F) && (((sSbusPacketStr*)uSbusRxBuffer)->footer == 0x00) ){
-			memcpy((uint8_t*)&sCameraCtrlSbusEncoder, uSbusRxBuffer, sizeof(sCameraCtrlSbusEncoder));
-
-			memcpy((uint8_t*)&sLinkSbusMosi, uSbusRxBuffer, sizeof(sSbusPacketStr));
-			vCtrlLinkTransmit((sSbusPacketStr*)&sLinkSbusMosi);
+		static sExtendedCrsfPacketStr 	ecrsf;
+		if((Size == sizeof(sSbusPacketStr)) && (uGetCorddSide() == rc_side)){
+			if( (((sSbusPacketStr*)uSbusRxBuffer)->header == 0x0F) && (((sSbusPacketStr*)uSbusRxBuffer)->footer == 0x00) ){
+				vCtrlLinkEncoderRCside		(uAdcData, &ecrsf, (sSbusPacketStr*)uSbusRxBuffer);
+				vCtrlLinkTransmitRC_Side(&ecrsf);
+			}
 		}
-		HAL_UARTEx_ReceiveToIdle_DMA(&UART_SBUS, (uint8_t*)uSbusRxBuffer, sizeof(uSbusRxBuffer));
-
+		HAL_UARTEx_ReceiveToIdle_DMA(&UART_SBUS, uSbusRxBuffer, sizeof(uSbusRxBuffer));
+	}
+	else if(huart == &UART_485){
+		if((Size == sizeof(sExtendedCrsfPacketStr)) && (uGetCorddSide() == rf_side)){
+			if(((sExtendedCrsfPacketStr*)uLinkRxBuffer)->type ==  EXT_CTRL_LINK_PACKET_TYPE){ 	// ExtCRSF packet.CODER side
+				crc = crc8_dvb_s2(0, ((sExtendedCrsfPacketStr*)uLinkRxBuffer)->type);	// CRC includes type and payload
+				for (int i = 0; i < ((sExtendedCrsfPacketStr*)uLinkRxBuffer)->length - 2; ++i)
+					crc = crc8_dvb_s2(crc, ((uint8_t*)&(((sExtendedCrsfPacketStr*)uLinkRxBuffer)->pld)) [i] );
+				if(crc == ((sExtendedCrsfPacketStr*)uLinkRxBuffer)->crc){
+					vCtrlLinkDecoderRFside((sExtendedCrsfPacketStr*)uLinkRxBuffer, &sCameraCtrlSbusPacketDecoder);
+				}
+			}
+		}
+		HAL_UARTEx_ReceiveToIdle_DMA(&UART_485, uLinkRxBuffer, sizeof(uLinkRxBuffer));
 	}
 	else if(huart == &UART_CRSF){
-		if(((sCrsfPacketStr*)uRxBuffer)->type ==  CRSF_PACKET_TYPE){ // CRSF packet.CODER side
-			crc = crc8_dvb_s2(0, ((sCrsfPacketStr*)uRxBuffer)->type);	// CRC includes type and payload
-			for (int i = 0; i < CRSF_PAYLOAD_LENGTH; ++i)	crc = crc8_dvb_s2(crc, ((sCrsfPacketStr*)uRxBuffer)->payload[i]);
-			if(crc == ((sCrsfPacketStr*)uRxBuffer)->crc){
-				memcpy(uTxBuffer, uRxBuffer, sizeof(uTxBuffer));
-				vExtendedPacketCoding(uAdcData,
-						(sCrsfPacketStr*)uTxBuffer,
-						(sExtendedCrsfPacketStr*)uExtendedTxBuffer,
-						&sCameraCtrlSbusEncoder,
-						(void*)0/*&sCameraCtrlSbusPacket*/,
-						encoder);
-				HAL_UART_Transmit_DMA(&UART_CRSF, uExtendedTxBuffer, sizeof(sExtendedCrsfPacketStr));
+		static sSbusPacketStr 	sbus;
+		if((Size == sizeof(sCrsfPacketStr)) && (uGetCorddSide() == rf_side)){
+			if(((sCrsfPacketStr*)uCrsfRxBuffer)->type ==  CRSF_PACKET_TYPE){ 	// CRSF packet.CODER side
+				crc = crc8_dvb_s2(0, ((sCrsfPacketStr*)uCrsfRxBuffer)->type);	// CRC includes type and payload
+				for (int i = 0; i < CRSF_PAYLOAD_LENGTH; ++i)	crc = crc8_dvb_s2(crc, ((sCrsfPacketStr*)uCrsfRxBuffer)->payload[i]);
+				if(crc == ((sCrsfPacketStr*)uCrsfRxBuffer)->crc){
+					memcpy(uTxBuffer, uCrsfRxBuffer, sizeof(uTxBuffer));
+					sFreqCode = vCrsfDecoderRFside((sCrsfPacketStr*)uCrsfRxBuffer, &sbus);
+					HAL_UART_Transmit_DMA(&UART_SBUS, (uint8_t*)&sbus, sizeof(sSbusPacketStr));
+				}
 			}
 		}
-		else if((((sExtendedCrsfPacketStr*)uRxBuffer)->type & EXTENDED_CRSF_PACKET_TYPE) == EXTENDED_CRSF_PACKET_TYPE){ // extended CRSF packet. DECODER side
-			crc = crc8_dvb_s2(0, ((sExtendedCrsfPacketStr*)uRxBuffer)->type);	// CRC includes type and payload
-			for (int i = 0; i < CRSF_PAYLOAD_LENGTH * EXTENDED_PAYLOAD_CNT; ++i)	crc = crc8_dvb_s2(crc, ((uint8_t*)&(((sExtendedCrsfPacketStr*)uRxBuffer)->pld))[i]);
-			if(crc == ((sExtendedCrsfPacketStr*)uRxBuffer)->crc){
-				memcpy(uExtendedTxBuffer, uRxBuffer, sizeof(uExtendedTxBuffer));
-
-				sFreqCode = vExtendedPacketCoding(uAdcData,
-						&sCrsfPacketDecoder/*(sCrsfPacketStr*)uTxBuffer*/,
-						(sExtendedCrsfPacketStr*)uExtendedTxBuffer,
-						&sCrsfToSbusPacketDecoder,
-						&sCameraCtrlSbusPacketDecoder,
-						decode);
-				HAL_UART_Transmit_DMA(&UART_CRSF, (uint8_t*)&sCrsfPacketDecoder/*uTxBuffer*/, sizeof(sCrsfPacketStr));
-				HAL_UART_Transmit_DMA(&UART_SBUS, (uint8_t*)&sCrsfToSbusPacketDecoder, sizeof(sSbusPacketStr));
-			}
-		}
-		else{
-			if(Size <= sizeof(uRxBuffer)){ //Any other packets with length less than 200 bytes will be transmitted without any changes
-				HAL_UART_Transmit_DMA(&UART_CRSF, uRxBuffer, Size);
-			}
-		}
-		//memset(uRxBuffer, 0, sizeof(uRxBuffer));
-		HAL_UARTEx_ReceiveToIdle_DMA(&UART_CRSF, (uint8_t*)uRxBuffer, sizeof(uRxBuffer));
+		HAL_UARTEx_ReceiveToIdle_DMA(&UART_CRSF, (uint8_t*)uCrsfRxBuffer, sizeof(uCrsfRxBuffer));
 	}
 }
 
@@ -281,7 +262,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *UartHandle){
 		__HAL_UART_CLEAR_FEFLAG(&UART_CRSF);
 		__HAL_UART_CLEAR_NEFLAG(&UART_CRSF);
 		__HAL_UART_CLEAR_IDLEFLAG(&UART_CRSF);
-		HAL_UARTEx_ReceiveToIdle_DMA(&UART_CRSF, (uint8_t*)uRxBuffer, sizeof(uRxBuffer));
+		HAL_UARTEx_ReceiveToIdle_DMA(&UART_CRSF, uCrsfRxBuffer, sizeof(uCrsfRxBuffer));
 	}
 	else if(UartHandle == &UART_SBUS){
 		__HAL_UART_CLEAR_PEFLAG(&UART_SBUS);
@@ -289,7 +270,15 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *UartHandle){
 		__HAL_UART_CLEAR_FEFLAG(&UART_SBUS);
 		__HAL_UART_CLEAR_NEFLAG(&UART_SBUS);
 		__HAL_UART_CLEAR_IDLEFLAG(&UART_SBUS);
-		HAL_UARTEx_ReceiveToIdle_DMA(&UART_SBUS, (uint8_t*)uSbusRxBuffer, sizeof(uSbusRxBuffer));
+		HAL_UARTEx_ReceiveToIdle_DMA(&UART_SBUS, uSbusRxBuffer, sizeof(uSbusRxBuffer));
+	}
+	else if(UartHandle == &UART_485){
+		__HAL_UART_CLEAR_PEFLAG		(&UART_485);
+		__HAL_UART_CLEAR_OREFLAG	(&UART_485);
+		__HAL_UART_CLEAR_FEFLAG		(&UART_485);
+		__HAL_UART_CLEAR_NEFLAG		(&UART_485);
+		__HAL_UART_CLEAR_IDLEFLAG	(&UART_485);
+		HAL_UARTEx_ReceiveToIdle_DMA(&UART_485, uLinkRxBuffer, sizeof(uLinkRxBuffer));
 	}
 
 }
@@ -370,9 +359,11 @@ int main(void)
 		HAL_UART_Transmit_DMA(&UART_SBUS, uSbusTxBuffer, sizeof(sSbusPacketStr));
 	}
 #else
-	HAL_UARTEx_ReceiveToIdle_DMA(&UART_CRSF, (uint8_t*)uRxBuffer, sizeof(uRxBuffer));
+	HAL_UARTEx_ReceiveToIdle_DMA(&UART_CRSF, uCrsfRxBuffer, sizeof(uCrsfRxBuffer));
 //---- SBUS data receiving ----
-	HAL_UARTEx_ReceiveToIdle_DMA(&UART_SBUS, (uint8_t*)uSbusRxBuffer, sizeof(uSbusRxBuffer));
+	HAL_UARTEx_ReceiveToIdle_DMA(&UART_SBUS, uSbusRxBuffer, sizeof(uSbusRxBuffer));
+//---- RS485 data receiving ----
+	HAL_UARTEx_ReceiveToIdle_DMA(&UART_485,	 uLinkRxBuffer, sizeof(uLinkRxBuffer));
 //-----------------------------
 	HAL_ADC_Start_DMA (&hadc1, (uint32_t*)uAdcBuf, 4);
   /* USER CODE END 2 */
@@ -380,29 +371,19 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
-
-#if 0
-//----------------------------------------------------
-// USART3 bidirectional mode test
-// WO inversion, 115200 8/n/n, RS485
-// Direction pin - RS485_DIR
-	  while(1){
-		  HAL_GPIO_WritePin(RS485_DIR_GPIO_Port, RS485_DIR_Pin, 1);
-		  HAL_UART_Transmit_DMA(&UART_485, uExtendedTxBuffer, sizeof(sExtendedCrsfPacketStr));
-
-		  HAL_Delay(10);
-	  }
-//----------------------------------------------------
-#endif
   {
-	  if(HAL_GPIO_ReadPin(MVIDEO_GPIO_Port, MVIDEO_Pin)){ 		// RF side. RLED- ON
+	  if(uGetCorddSide() == rf_side/*HAL_GPIO_ReadPin(MVIDEO_GPIO_Port, MVIDEO_Pin)*/){ 		// RF side. RLED- ON
 		  HAL_GPIO_WritePin(RLED_GPIO_Port, RLED_Pin, 0);
 		  HAL_GPIO_WritePin(MCRSF_GPIO_Port, MCRSF_Pin, 0);		// CRSF packets bypass uC
 
 	  }
 	  else{														// Remote control side. GLED - OFF
 		  HAL_GPIO_WritePin(RLED_GPIO_Port, RLED_Pin, 1);
+#ifdef CRSF_DIRECT_LINK
+		  HAL_GPIO_WritePin(MCRSF_GPIO_Port, MCRSF_Pin, 0);		// CRSF packets go through uC
+#else
 		  HAL_GPIO_WritePin(MCRSF_GPIO_Port, MCRSF_Pin, 1);		// CRSF packets go through uC
+#endif
 	  }
 	  HAL_GPIO_WritePin(VCODEC_EN_GPIO_Port, VCODEC_EN_Pin, 0);	// Disable external video decoder
 
@@ -791,8 +772,9 @@ static void MX_USART2_UART_Init(void)
   huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
   huart2.Init.OverSampling = UART_OVERSAMPLING_16;
   huart2.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-  huart2.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_TXINVERT_INIT;
+  huart2.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_TXINVERT_INIT|UART_ADVFEATURE_RXINVERT_INIT;
   huart2.AdvancedInit.TxPinLevelInvert = UART_ADVFEATURE_TXINV_ENABLE;
+  huart2.AdvancedInit.RxPinLevelInvert = UART_ADVFEATURE_RXINV_ENABLE;
   if (HAL_UART_Init(&huart2) != HAL_OK)
   {
     Error_Handler();
@@ -819,7 +801,7 @@ static void MX_USART3_UART_Init(void)
 
   /* USER CODE END USART3_Init 1 */
   huart3.Instance = USART3;
-  huart3.Init.BaudRate = 100000;
+  huart3.Init.BaudRate = 115201;
   huart3.Init.WordLength = UART_WORDLENGTH_8B;
   huart3.Init.StopBits = UART_STOPBITS_1;
   huart3.Init.Parity = UART_PARITY_NONE;
